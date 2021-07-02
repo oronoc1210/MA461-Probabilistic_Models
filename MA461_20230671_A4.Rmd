@@ -1,0 +1,147 @@
+---
+title: "MA461 Assignment 4"
+author: "Conor O'Donoghue"
+date: "5/3/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+First we start with the given set of genotypes, from which we can easily calculate the set of all possible haplotypes.
+As there are 4 SNPs, but the last is fixed (All 2, so all haplotypes must be 1 in that position),
+there should be $2^3=8$ haplotypes.
+
+We also need to know which pairs of haplotypes (row in haplotype array) are consistent with each genotype (row in genotype array).
+Although there is a programmatic way of doing this, with so few genotypes and haplotypes, it would be easier to just write them out.
+Here, I represent the set of consistent haplotype pairs for each genotype as an nx2 array,
+Where each row represents a consistent haplotype pair, and each value is equal to the row number of the haplotype array.
+
+```{r}
+G = array(c(0,1,0,1,1,1,0,1,1,0,1,2,2,2,2,2,2,2,2,2),c(5,4))
+Haps = array(c(0,0,0,1,
+               0,0,1,1,
+               0,1,0,1,
+               0,1,1,1,
+               1,0,0,1,
+               1,0,1,1,
+               1,1,0,1,
+               1,1,1,1), c(4,8))
+Haps=t(Haps)
+
+H1 = array(c(1,4,
+             2,3), c(2,2))
+H1=t(H1)
+H2 = array(c(2,6),c(1,2))
+H3 = array(c(2,4),c(1,2))
+H4 = array(c(2,8,
+             4,6),c(2,2))
+H4=t(H4)
+# genotype 5 is the same as genotype 2
+H5 = H2
+
+print(G)
+print(Haps)
+print(H1)
+print(H2)
+print(H3)
+print(H4)
+print(H5)
+```
+# EM algorithm
+The EM algorithm begins with an initial guess of 1/8 for the frequency of each haplotype (each equally as frequent),
+and then, for each genotype, calculates the probability of each possible haplotype pair.
+Then, for each haplotype, we sum the probability of each haplotype pair containing it that we just calculated
+to obtain the expected counts for each haplotype, 
+which we can use to calculate the expected frequency of each haplotype by dividing by the total of the counts.
+With new frequencies we can repeat the algorithm, which is done until the frequencies converge.
+
+Although one could write a more general EM algorithm that only takes a set of genotypes as input and calculates the possible haplotypes,
+consistent haplotype pairs for each genotype, and applies the EM algorithm, for the sake of solving the problem in the assignment it's much easier
+to find the haplotypes and haplotype pairs by hand (shown above), and write a more constrained algorithm using the exact set of haplotypes and haplotype pairs as inputs. Comments include what a more programmatic solution at each step may entail, but the execution is lazily constrained. (sorry)
+
+```{r}
+pair_product = function(pair, freqs){
+  # Multiplies together the frequencies of each haplotype in a haplotype pair
+  P = freqs[pair[1]]*freqs[pair[2]]
+  return(P)
+}
+
+prob_hap_pair = function(H, pair, freqs){
+  # Takes all consistent haplotype pairs, a selected pair, 
+  #   and haplotype frequencies as input
+  # Returns the probability of observing that haplotype pair 
+  #   by dividing prob of pair by sum of probs of all pairs
+  all_pairs = sum(apply(H, 1, pair_product, freqs=freqs))
+  P = pair_product(pair, freqs) / all_pairs
+  return(P)
+}
+
+em_algo = function(haps, H1, H2, H3, H4, H5, freqs){
+  # Programmatic way of finding haplotypes: 
+  #   divide genotype array by 2,
+  #   and for each 0.5 value, replace row with 2 rows, 
+  #   one with 1 in that column, other with 0.
+  #   Not very efficient to delete and add rows, but that would be the idea.
+  # Programmatic way of finding haplotype pairs:
+  #   iterate over genotypes, and for each genotype iterate over haplotypes.
+  #   For each haplotype, run through the list of haplotypes to find 
+  #   the possible single(!) other haplotype that adds 
+  #   to produce the given genotype.
+  #   Store pairs in an array, where rows correspond to genotype #, 
+  #   and columns correspond to haplotype pair #.
+  #     Depending on the number of SNPs, could have a lot of zero values. 
+  #     There likely exists a better solution for storing.
+  #   As the #SNPs and #Haplotypes grow, this becomes extremely slow. O(g*h^2)
+  #     There is definitely a more efficient answer, 
+  #     but for problems similar in size to the one given, it will do.
+  
+  
+  # Calculate haplotype pair probabilities
+  # More programmatic solution probably stores calculated pair probs 
+  #   in an array of the same dim as the genotype/haplotype pair array above,
+  #   and also probably has frequencies as a class attribute.
+  g1p14 = prob_hap_pair(H1, H1[1,], freqs)
+  g1p23 = prob_hap_pair(H1, H1[2,], freqs)
+  g2p26 = prob_hap_pair(H2, H2[1,], freqs)
+  g3p24 = prob_hap_pair(H3, H3[1,], freqs)
+  g4p28 = prob_hap_pair(H4, H4[1,], freqs)
+  g4p46 = prob_hap_pair(H4, H4[2,], freqs)
+  g5p26 = prob_hap_pair(H5, H5[1,], freqs)
+  # Calculate expected counts for each haplotype
+  # Haplotypes 5 and 7 aren't part of a consistent pair in any haplotype,
+  #   so their counts will always be 0.
+  # More programmatic solution likely uses the genotype/haplotype pairs array 
+  #   as a reference to find out which values in the array of 
+  #   haplotype pair probabilities to add together.
+  c1 = g1p14
+  c2 = g1p23+g2p26+g3p24+g4p28+g5p26
+  c3 = g1p23
+  c4 = g1p14 + g3p24 + g4p46
+  c5 = 0
+  c6 = g2p26 + g4p46 + g5p26
+  c7 = 0
+  c8 = g4p28
+  total = sum(c(c1, c2, c3, c4, c5, c6, c7, c8))
+  freqs = c(c1, c2, c3, c4, c5, c6, c7, c8)/total
+  return(freqs)
+}
+
+# Now let's run it 1000 times to get a converged set of frequencies!
+# A more general solution would probably run *until* it converges,
+#   e.g. until the differences between steps is sufficiently small,
+#   but for a quick answer an arbitrarily chosen large number will do.
+freqs = rep(1/8, 8)
+for(i in 1:1000){
+  freqs = em_algo(Haps, H1, H2, H3, H4, H5, freqs)
+}
+print(freqs)
+```
+The answers are given in scientific notation because haplotypes 1 (0001) and 8 (1111) are estimated to have extremely low frequencies
+at 1.9e-302 and 4.0e-178 respectively. Alongside haplotypes 5 (1001) and 7 (1101) which couldn't exist at any frequency due to 
+the lack of consistent pairs in any genotype, we can assume that the four haplotypes 1, 5, 7 and 8 are not present in the given set of individuals.
+
+What's left is haplotypes 2 (0011), 3 (0101), 4 (0111), and 6 (1011), which are estimated to have frequencies of 0.4, 0.1, 0.2, and 0.3 respectively. 
+As expected, haplotype 2 is estimated to have the highest frequency due to being the most common haplotype in the total set of haplotype pairs.

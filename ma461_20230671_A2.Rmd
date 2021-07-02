@@ -1,0 +1,175 @@
+---
+title: "MA461 Assignment 2"
+author: "Conor O'Donoghue"
+date: "March 19, 2021"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Starting Parameters
+We have two hidden states -- active and dormant -- and three observable states -- low, intermediate, and high ranges of blood platelet levels.
+
+First we need the transition probability matrix of the hidden layer. 
+We're told that the durations of the active and dormant phases are geometrically distributed with means of 2 months and 5 months, respectively.
+The probability of exiting the state is equal to the multiplicative inverse of the mean, so the probability of transitioning from active to dormant is 1/2 and the probability of transitioning from dormant to active is 1/5. With this we have the transition probability matrix:
+```{r}
+A = array(c(1/2,1/5,1/2,4/5),c(2,2))
+A
+```
+Where the states are [active, dormant].
+
+From here we can calculate the stationary distribution, which we'll need later to start the forward algorithm with.
+
+```{r}
+eigen = eigen(t(A))
+eigen
+```
+
+The first column is the one with an eigenvalue of 1, so that's the vector we're looking for. We'll also need to divide each value by the total of the vector to turn it into a stochastic vector.
+
+```{r}
+v = eigen$vectors[,1]
+pi = v/sum(v)
+pi
+```
+
+Next we need to set up the emission matrix. Similarly to the transition probability matrix, I want the 'active' state to be the first and the 'dormant' the second row, with columns being assigned to 'low', 'intermediate', and 'high' -- now enumerated with 1, 2, and 3.
+
+In short, the probability of platelet levels in the low, intermediate, and high ranges are [0.7,0.2,0.1] for active and [0.2,0.3,0.5] for dormant, and I want each of these vectors as rows in a 2x3 array.
+```{r}
+E = array(c(0.7,0.2,0.2,0.3,0.1,0.5),c(2,3))
+E
+```
+Next, I want to change the vector of platelet counts into a vector of states that are either 'low', 'intermediate', or 'high'. 
+
+'low' was described as <100,000, 'intermediate' as between 100,000-150,000, and 'high' as 150,000-450,000.
+
+```{r}
+obs = c(95, 160, 148, 88, 180, 204, 162, 141)
+obs
+obs[obs >= 150] <- 3
+obs[obs >= 100 & obs < 150] <- 2
+obs[obs < 100 & obs > 3] <- 1
+obs
+
+```
+
+# Forward algorithm
+Now that we have everything set up, we can get started on the forward and backward algorithms, which are both necessary for obtaining the probability of being in a hidden state at a given month.
+
+The forward algorithm calculates the probability of a sequence of observations by summing over *all* possible paths through the hidden states. ( $P(x)=\sum_{\rho} P(x,\rho)$ )
+
+First I'll initialize the array with number of rows equal to the number of hidden states and number of columns equal to the length of the vector of platelet states, calculate the initial states, and then propagate with a loop.
+
+Each entry in the array is given by:
+$$f_{m}(i+1) = e_{m}(x_{i}+1)\sum_{k} a_{km}f_{k}(x_{i})$$
+where $f_{m}(i)$ is the probability of the sequence up to position i, and that the hidden state at i is m, $e_{m}(x_{i})$ is the emission probability of the observed state at position i given the hidden state m, and $a_{km}$ is the probability of transitioning from hidden state k to hidden state m.
+
+This is a recursive algorithm, where f is calculated using the f values from the previous position for each state, as well as the emission and transition probabilities.
+
+The exception is for the first entry, which is given by:
+$$f_{m}(1) = \pi_{m}e_{m}(x_{1})$$
+
+Where $\pi_{m}$ is the entry in the stationary vector of the transition probability matrix for state m.
+```{r}
+forward = array(rep(0,length(obs)*2),c(2,8))
+forward
+obs
+```
+
+```{r}
+forward[1,1] = pi[1]*E[1,obs[1]]
+forward[2,1] = pi[2]*E[2,obs[1]]
+forward
+```
+
+Now that we have the first two values, we can use them to propagate forward.
+
+```{r}
+hstates = c(1,2)
+# starting from column 2, as we already filled column 1
+for(i in 2:ncol(forward)){
+  for(m in 1:nrow(forward)){
+    # get the other state for algorithm
+    m2 = hstates[-m]
+    forward[m,i] = E[m,obs[i]]*(A[m,m]*forward[m,i-1]+A[m2,m]*forward[m2,i-1])
+  }
+}
+forward
+```
+And now that all of the values are filled, we can make an estimation of P(X) using the following formula:
+$$P(x) = \sum_{k} f_{k}(L)$$
+Where k is the hidden state, and L is the length of the sequence.
+In this case, we add together the values of $f_{1}(6)$ and $f_{2}(6)$.
+
+```{r}
+Px = forward[1,8] + forward[2,8]
+Px
+```
+
+
+# Backward algorithm
+Similar to the forward algorithm, but now we're calculating P(x) in the reverse direction.
+
+While the forward algorithm utilizes a joint probability, the backward algorithm works by calculating the conditional probability of the sequence of observations from position i+1 to the end of the sequence (where i=L : the length of the sequence) *given* the hidden state at position i. Hence, the backward algorithm is defined as:
+$$b_{m}(i) = P(x_{i+1},...,x_{L} | \rho_{i}=m)$$
+
+The initial value for i=L is generated very simply: $b_{k}(L)=1$ for all states k, because the probability of the sequence of observations after position i=L is 1 regardless of state, as there is no sequence to oberserve after position L. We can then propagate backwards using the formula:
+$$b_{m}(i) = \sum_{k} a_{mk}e_{k}(x_{i+1})b_{k}(i+1)$$
+
+Similar to before, I'll initialize an empty 2x6 array, enter the intial values for i=L, and then use a nested loop to propagate backwards.
+
+```{r}
+backward = array(rep(0,length(obs)*2),c(2,8))
+backward[1,8] = 1
+backward[2,8] = 1
+backward
+obs
+```
+
+
+```{r}
+hstates = c(1,2)
+# starting from one away from the end of the sequence, ending at the first column
+for(i in (ncol(backward)-1):1){
+  for(m in 1:nrow(backward)){
+    # get the other state for algorithm
+    m2 = hstates[-m]
+    backward[m,i] = (E[m,obs[i+1]]*A[m,m]*backward[m,i+1]+E[m2,obs[i+1]]*A[m,m2]*backward[m2,i+1])
+  }
+}
+backward
+```
+
+Now we can calculate P(x) with the formula:
+$$P(x) = \sum_{k} \pi_{k}e_{k}(x_{1})b_{k}(1)$$
+
+Which should give us the same answer as the forward algorithm, serving as a check that we did everything correctly.
+
+```{r}
+Px2 = pi[1]*E[1,obs[1]]*backward[1,1] + pi[2]*E[2,obs[1]]*backward[2,1]
+Px2
+```
+
+We obtained the same answer -- 0.0001800434 -- from each algorithm, so it appears that they're both correct.
+
+# Forward-backward procedure
+Now that we have the full array of values from the forward and backward algorithms as well as P(x), answering the intial question -- calculating the probability that the autoimmune condition is active in month 6 -- is surprisingly trivial.
+
+Using the forward-backward procedure, the posterior probability that the hidden state at position i is m is given by:
+$$P(\rho_{i}=m|x) = \frac{f_{k}(i)b_{k}(i)}{P(x)}$$
+
+For month 6, that simply means plugging in the forwards and backwards values generated for the 6th observation where the 6th observation is in the active state, and divide by the probability of the data that we've already obtained twice.
+
+```{r}
+P16 = forward[1,6]*backward[1,6]/Px
+P16
+```
+
+Hence, the probability that the autoimmune condition is active in month 6 given the sequence of observations is 4.054%.

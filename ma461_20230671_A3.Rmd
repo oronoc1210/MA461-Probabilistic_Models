@@ -1,0 +1,98 @@
+---
+title: "MA461 Assignment 3"
+author: "Conor O'Donoghue"
+date: "April 21, 2021"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Creating the Function
+Our goal is to calculate the genetic distance of two sequences using the 
+Kimura 2-parameter model, but this model utilizes two parameters: time, and 
+the ratio of transition rate ($\alpha$) to transversion rate ($\beta$) that we don't have.
+
+So, our goal is to do a maximum likelihood estimate of the genetic distance,
+using the optimx package to maximize the probability of the observed sequences
+with time and the ratio as free parameters.
+
+## Why the ratio of a to b and not a and b as separate parameters?
+As part of scaling the generator matrix, we need to set $2\beta+\alpha=1$. 
+With this constraint, $\alpha$ and $\beta$ can both be calculated from their ratio instead.
+Plugging $\alpha=1-2\beta$ into $\frac{\alpha}{\beta}=r$ gives
+$\frac{1-2\beta}{\beta}=r$, which rearranges to $\beta=\frac{1}{r+2}$.
+Thus we can calculate $\beta$ from r, and obtain $\alpha$ from $\alpha=1-2\beta$.
+
+```{r, message=FALSE}
+library(expm)
+library(optimx)
+
+# Functions for converting sequences to vector of integers
+nuc2int <- function(nuc){
+  nucs = c("A","C","G","T")
+  nuc_int <- match(nuc, nucs)
+  return(nuc_int)
+}
+seq2int <- function(seq){
+  ints <- sapply(strsplit(seq,""), nuc2int)
+  return(ints)
+}
+
+# kimura_2p function
+# t = time, r = ratio of alpha/beta, s1=sequence 1, s2=sequence 2
+kimura_2p <- function(params, s1, s2) {
+  t=params[1]
+  r=params[2]
+  # Calculating scaled a and b from r
+  b = 1/(r+2)
+  a = 1 - 2*b
+  # Filling the generator matrix
+  # It's not very large, so I find it easiest to just type it out.
+  G = array(c(-1,b,a,b,b,-1,b,a,a,b,-1,b,b,a,b,-1), c(4,4))
+  # Obtaining the probability matrix using t and G
+  Pt = expm(t*G)
+  s1_ints = seq2int(s1)
+  s2_ints = seq2int(s2)
+  prob = Pt[s1_ints[1],s2_ints[1]]
+  for(i in 2:length(s1_ints)){
+    s1_int <- s1_ints[i]
+    s2_int <- s2_ints[i]
+    prob <- prob * Pt[s1_int, s2_int]
+  }
+  return(prob)
+}
+```
+# Optimizing time and ratio
+
+```{r}
+seq1 = "AGTCCATGAT"
+seq2 = "ACGTCGTGCT"
+optimx(par=c(1,2),
+       kimura_2p,
+       s1=seq1, s2=seq2,
+       control=list(maximize=T))
+```
+
+It looks like BFGS found a local maximum close to the starting intial value r=2,
+but Nelder-Mead found a slightly higher value at r=1.63.
+Both of their estimations of t were close, 
+but Nelder-Mead found a higher probability with t=0.831.
+
+This means that the maximum likelihood estimate of the genetic distance - the number of substitutions per site since the sequences diverged from their common ancestor - is 0.83.
+
+# Test against distance formula
+```{r}
+# 2 transitions out of 10 sites
+p = 2/10
+# 3 transversions out of 10 sites
+q = 3/10
+d = -0.5*log((1-2*p-q)*sqrt(1-2*q))
+d
+```
+
+Using the formula provided, we obtain the same answer for genetic distance: 0.831. This corroborates our result as an accurate estimation of genetic distance.
